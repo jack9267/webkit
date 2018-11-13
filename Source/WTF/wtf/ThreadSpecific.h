@@ -195,18 +195,132 @@ typedef DWORD ThreadSpecificKey;
 
 static const constexpr ThreadSpecificKey InvalidThreadSpecificKey = FLS_OUT_OF_INDEXES;
 
+class CTLS
+{
+public:
+	CTLS(void)
+	{
+		m_hModule = LoadLibrary(TEXT("kernel32.dll"));
+		m_FlsAlloc = (FLSALLOCPROC)GetProcAddress(m_hModule, "FlsAlloc");
+		m_FlsFree = (FLSFREEPROC)GetProcAddress(m_hModule, "FlsFree");
+		m_FlsSetValue = (FLSSETVALUEPROC)GetProcAddress(m_hModule, "FlsSetValue");
+		m_FlsGetValue = (FLSGETVALUEPROC)GetProcAddress(m_hModule, "FlsGetValue");
+
+		m_AcquireSRWLockExclusive = (ACQUIRESRWLOCKEXCLUSIVEPROC)GetProcAddress(m_hModule, "AcquireSRWLockExclusive");
+		m_TryAcquireSRWLockExclusive = (TRYACQUIRESRWLOCKEXCLUSIVEPROC)GetProcAddress(m_hModule, "TryAcquireSRWLockExclusive");
+		m_ReleaseSRWLockExclusive = (RELEASESRWLOCKEXCLUSIVEPROC)GetProcAddress(m_hModule, "ReleaseSRWLockExclusive");
+	}
+
+	~CTLS(void)
+	{
+		FreeModule(m_hModule);
+	}
+
+private:
+	HMODULE m_hModule;
+
+	typedef DWORD(__stdcall *FLSALLOCPROC)(PFLS_CALLBACK_FUNCTION lpCallback);
+	typedef BOOL(__stdcall *FLSFREEPROC)(DWORD dwFlsIndex);
+	typedef BOOL(__stdcall *FLSSETVALUEPROC)(DWORD dwFlsIndex, PVOID lpFlsData);
+	typedef PVOID(__stdcall *FLSGETVALUEPROC)(DWORD dwFlsIndex);
+
+	typedef void(__stdcall *ACQUIRESRWLOCKEXCLUSIVEPROC)(PSRWLOCK SRWLock);
+	typedef BOOLEAN(__stdcall *TRYACQUIRESRWLOCKEXCLUSIVEPROC)(PSRWLOCK SRWLock);
+	typedef void(__stdcall *RELEASESRWLOCKEXCLUSIVEPROC)(PSRWLOCK SRWLock);
+
+	FLSALLOCPROC m_FlsAlloc;
+	FLSFREEPROC m_FlsFree;
+	FLSSETVALUEPROC m_FlsSetValue;
+	FLSGETVALUEPROC m_FlsGetValue;
+
+	ACQUIRESRWLOCKEXCLUSIVEPROC m_AcquireSRWLockExclusive;
+	TRYACQUIRESRWLOCKEXCLUSIVEPROC m_TryAcquireSRWLockExclusive;
+	RELEASESRWLOCKEXCLUSIVEPROC m_ReleaseSRWLockExclusive;
+
+public:
+	static CTLS m_TLS;
+
+	DWORD Alloc(PFLS_CALLBACK_FUNCTION lpCallback)
+	{
+		if (m_FlsAlloc != nullptr)
+			return m_FlsAlloc(lpCallback);
+		return TlsAlloc();
+	}
+
+	BOOL Free(DWORD dwIndex)
+	{
+		if (m_FlsFree != nullptr)
+			return m_FlsFree(dwIndex);
+		return TlsFree(dwIndex);
+	}
+
+	BOOL SetValue(DWORD dwIndex, void* pValue)
+	{
+		if (m_FlsSetValue != nullptr)
+			return m_FlsSetValue(dwIndex, pValue);
+		return TlsSetValue(dwIndex, pValue);
+	}
+
+	PVOID GetValue(DWORD dwIndex)
+	{
+		if (m_FlsGetValue != nullptr)
+			return m_FlsGetValue(dwIndex);
+		return TlsGetValue(dwIndex);
+	}
+
+	void AcquireSRWLockExclusive(PSRWLOCK SRWLock)
+	{
+		if (m_AcquireSRWLockExclusive != nullptr)
+			m_AcquireSRWLockExclusive(SRWLock);
+		else
+		{
+			LPCRITICAL_SECTION lpCriticalSection = (LPCRITICAL_SECTION)SRWLock->Ptr;
+			EnterCriticalSection(lpCriticalSection);
+		}
+	}
+
+	BOOLEAN TryAcquireSRWLockExclusive(PSRWLOCK SRWLock)
+	{
+		if (m_TryAcquireSRWLockExclusive != nullptr)
+			return m_TryAcquireSRWLockExclusive(SRWLock);
+
+		LPCRITICAL_SECTION lpCriticalSection = (LPCRITICAL_SECTION)SRWLock->Ptr;
+		return (BOOLEAN)TryEnterCriticalSection(lpCriticalSection);
+	}
+
+	void ReleaseSRWLockExclusive(PSRWLOCK SRWLock)
+	{
+		if (m_ReleaseSRWLockExclusive != nullptr)
+			m_ReleaseSRWLockExclusive(SRWLock);
+		else
+		{
+			LPCRITICAL_SECTION lpCriticalSection = (LPCRITICAL_SECTION)SRWLock->Ptr;
+			LeaveCriticalSection(lpCriticalSection);
+		}
+	}
+};
+
+#define FlsAlloc CTLS::m_TLS.Alloc
+#define FlsFree CTLS::m_TLS.Free
+#define FlsSetValue CTLS::m_TLS.SetValue
+#define FlsGetValue CTLS::m_TLS.GetValue
+
+#define AcquireSRWLockExclusive CTLS::m_TLS.AcquireSRWLockExclusive
+#define TryAcquireSRWLockExclusive CTLS::m_TLS.TryAcquireSRWLockExclusive
+#define ReleaseSRWLockExclusive CTLS::m_TLS.ReleaseSRWLockExclusive
+
 inline void threadSpecificKeyCreate(ThreadSpecificKey* key, void (THREAD_SPECIFIC_CALL *destructor)(void *))
 {
-    DWORD flsKey = FlsAlloc(destructor);
-    if (flsKey == FLS_OUT_OF_INDEXES)
-        CRASH();
+	DWORD flsKey = FlsAlloc(destructor);
+	if (flsKey == FLS_OUT_OF_INDEXES)
+		CRASH();
 
-    *key = flsKey;
+	*key = flsKey;
 }
 
 inline void threadSpecificKeyDelete(ThreadSpecificKey key)
 {
-    FlsFree(key);
+	FlsFree(key);
 }
 
 inline void threadSpecificSet(ThreadSpecificKey key, void* data)

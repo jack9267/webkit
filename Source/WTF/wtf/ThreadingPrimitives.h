@@ -55,8 +55,21 @@ using PlatformCondition = pthread_cond_t;
 #elif OS(WINDOWS)
 using ThreadIdentifier = uint32_t;
 using PlatformThreadHandle = HANDLE;
-using PlatformMutex = SRWLOCK;
-using PlatformCondition = CONDITION_VARIABLE;
+struct PlatformMutex {
+	CRITICAL_SECTION m_internalMutex;
+	size_t m_recursionCount;
+};
+struct PlatformCondition {
+	size_t m_waitersGone;
+	size_t m_waitersBlocked;
+	size_t m_waitersToUnblock;
+	HANDLE m_blockLock;
+	HANDLE m_blockQueue;
+	HANDLE m_unblockLock;
+
+	bool timedWait(PlatformMutex&, DWORD durationMilliseconds);
+	void signal(bool unblockAll);
+};
 #else
 #error "Not supported platform"
 #endif
@@ -65,8 +78,8 @@ class Mutex {
     WTF_MAKE_NONCOPYABLE(Mutex);
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    constexpr Mutex() = default;
-    WTF_EXPORT_PRIVATE ~Mutex();
+	WTF_EXPORT_PRIVATE Mutex();
+	WTF_EXPORT_PRIVATE ~Mutex();
 
     WTF_EXPORT_PRIVATE void lock();
     WTF_EXPORT_PRIVATE bool tryLock();
@@ -78,7 +91,7 @@ private:
 #if USE(PTHREADS)
     PlatformMutex m_mutex = PTHREAD_MUTEX_INITIALIZER;
 #elif OS(WINDOWS)
-    PlatformMutex m_mutex = SRWLOCK_INIT;
+    PlatformMutex m_mutex;
 #endif
 };
 
@@ -88,8 +101,8 @@ class ThreadCondition {
     WTF_MAKE_NONCOPYABLE(ThreadCondition);
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    constexpr ThreadCondition() = default;
-    WTF_EXPORT_PRIVATE ~ThreadCondition();
+	WTF_EXPORT_PRIVATE ThreadCondition();
+	WTF_EXPORT_PRIVATE ~ThreadCondition();
     
     WTF_EXPORT_PRIVATE void wait(Mutex& mutex);
     // Returns true if the condition was signaled before absoluteTime, false if the absoluteTime was reached or is in the past.
@@ -101,7 +114,7 @@ private:
 #if USE(PTHREADS)
     PlatformCondition m_condition = PTHREAD_COND_INITIALIZER;
 #elif OS(WINDOWS)
-    PlatformCondition m_condition = CONDITION_VARIABLE_INIT;
+    PlatformCondition m_condition;
 #endif
 };
 
